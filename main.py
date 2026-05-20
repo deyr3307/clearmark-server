@@ -22,13 +22,23 @@ UPLOAD_FOLDER = '/tmp' if os.name != 'nt' else './uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
-def clean_pdf(input_path, output_path, crop_pixels=90):
+def clean_pdf(input_path, output_path, watermark_text="NotebookLM", crop_pixels=0):
     try:
         doc = fitz.open(input_path)
         for page in doc:
-            rect = page.rect
-            new_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 - crop_pixels)
-            page.set_cropbox(new_rect)
+            # Search and redact text watermark
+            instances = page.search_for(watermark_text)
+            for inst in instances:
+                expanded = fitz.Rect(inst.x0 - 20, inst.y0 - 5, inst.x1 + 5, inst.y1 + 5)
+                page.add_redact_annot(expanded, fill=(1, 1, 1))
+            page.apply_redactions()
+
+            # Optional crop
+            if crop_pixels > 0:
+                rect = page.rect
+                new_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 - crop_pixels)
+                page.set_cropbox(new_rect)
+
         doc.save(output_path, garbage=3, deflate=True)
         doc.close()
     except Exception as e:
@@ -66,7 +76,8 @@ async def process_file(
 
     try:
         if ext == '.pdf':
-            clean_pdf(input_path, output_path, crop_pixels=90)
+            text_to_remove = watermark_text.strip() or "NotebookLM"
+            clean_pdf(input_path, output_path, watermark_text=text_to_remove)
             media_type = 'application/pdf'
         elif ext in ['.pptx', '.ppt']:
             text_to_remove = watermark_text.strip() or "NotebookLM"
