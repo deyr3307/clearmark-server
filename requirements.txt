@@ -3,4 +3,3 @@ uvicorn
 python-multipart
 PyMuPDF
 python-pptx
-Pillow
