@@ -26,7 +26,7 @@ def clean_pdf(input_path, output_path, target_text):
         for page in doc:
             text_instances = page.search_for(target_text)
             for inst in text_instances:
-                page.add_redact_annot(inst, fill=(1, 1, 1))
+                page.add_redact_annot(inst, fill=None)
             page.apply_redactions()
         doc.save(output_path)
         doc.close()
@@ -83,4 +83,4 @@ async def process_file(
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-    
+                        
