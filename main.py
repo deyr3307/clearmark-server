@@ -20,15 +20,17 @@ app.add_middleware(
 UPLOAD_FOLDER = '/tmp' if os.name != 'nt' else './uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def clean_pdf(input_path, output_path, target_text):
+def clean_pdf(input_path, output_path, crop_pixels=60):
     try:
         doc = fitz.open(input_path)
         for page in doc:
-            text_instances = page.search_for(target_text)
-            for inst in text_instances:
-                page.add_redact_annot(inst, fill=None)
-            page.apply_redactions()
-        doc.save(output_path)
+            rect = page.rect
+            # Crop 60 pixels from the bottom of each page to remove logo and text
+            new_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 - crop_pixels)
+            page.set_cropbox(new_rect)
+        
+        # Save with garbage collection to permanently remove the cropped data
+        doc.save(output_path, garbage=3, deflate=True)
         doc.close()
     except Exception as e:
         raise Exception(f"PDF Processing Error: {str(e)}")
@@ -50,11 +52,8 @@ def clean_pptx(input_path, output_path, target_text):
 @app.post("/process")
 async def process_file(
     file: UploadFile = File(...),
-    watermark_text: str = Form(...)
+    watermark_text: str = Form(default="NotebookLM")
 ):
-    if not watermark_text.strip():
-        raise HTTPException(status_code=400, detail="Watermark text is required.")
-        
     ext = os.path.splitext(file.filename)[1].lower()
     input_path = os.path.join(UPLOAD_FOLDER, f"input_file{ext}")
     output_path = os.path.join(UPLOAD_FOLDER, f"output_file{ext}")
@@ -64,10 +63,13 @@ async def process_file(
 
     try:
         if ext == '.pdf':
-            clean_pdf(input_path, output_path, watermark_text.strip())
+            # PDF automatically crops the bottom, no text matching needed
+            clean_pdf(input_path, output_path, crop_pixels=60)
             media_type = 'application/pdf'
         elif ext in ['.pptx', '.ppt']:
-            clean_pptx(input_path, output_path, watermark_text.strip())
+            # PPTX still uses text matching
+            text_to_remove = watermark_text.strip() if watermark_text.strip() else "NotebookLM"
+            clean_pptx(input_path, output_path, text_to_remove)
             media_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
         else:
             raise HTTPException(status_code=400, detail="Only PDF and PPTX files are supported now.")
@@ -83,4 +85,4 @@ async def process_file(
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-                        
+    
