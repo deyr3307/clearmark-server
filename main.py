@@ -1,12 +1,21 @@
 import os
 import fitz
 from pptx import Presentation
-from flask import Flask, request, send_file, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageDraw
+import shutil
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 UPLOAD_FOLDER = '/tmp' if os.name != 'nt' else './uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -38,51 +47,43 @@ def clean_pptx(input_path, output_path, target_text):
     except Exception as e:
         raise Exception(f"PPTX Processing Error: {str(e)}")
 
-@app.route('/process', methods=['POST'])
-def process_file():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded."}), 400
+@app.post("/process")
+async def process_file(
+    file: UploadFile = File(...),
+    watermark_text: str = Form(...)
+):
+    if not watermark_text.strip():
+        raise HTTPException(status_code=400, detail="Watermark text is required.")
         
-    file = request.files['file']
-    target_text = request.form.get('watermark_text', '').strip()
-    
-    if file.filename == '':
-        return jsonify({"error": "No selected file."}), 400
-        
-    if not target_text:
-        return jsonify({"error": "Watermark text is required."}), 400
-
     ext = os.path.splitext(file.filename)[1].lower()
     input_path = os.path.join(UPLOAD_FOLDER, f"input_file{ext}")
     output_path = os.path.join(UPLOAD_FOLDER, f"output_file{ext}")
     
-    file.save(input_path)
+    with open(input_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
     try:
         if ext == '.pdf':
-            clean_pdf(input_path, output_path, target_text)
-            mimetype = 'application/pdf'
+            clean_pdf(input_path, output_path, watermark_text.strip())
+            media_type = 'application/pdf'
         elif ext in ['.pptx', '.ppt']:
-            clean_pptx(input_path, output_path, target_text)
-            mimetype = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            clean_pptx(input_path, output_path, watermark_text.strip())
+            media_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
         elif ext in ['.png', '.jpg', '.jpeg']:
             img = Image.open(input_path)
             draw = ImageDraw.Draw(img)
             w, h = img.size
             draw.rectangle([(0, h - 60), (w, h)], fill="white")
             img.save(output_path)
-            mimetype = f"image/{ext[1:]}"
+            media_type = f"image/{ext[1:]}"
         else:
-            return jsonify({"error": "Unsupported file format."}), 400
+            raise HTTPException(status_code=400, detail="Unsupported file format.")
 
-        return send_file(output_path, mimetype=mimetype, as_attachment=True, download_name=f"clean_{file.filename}")
-
+        return FileResponse(
+            path=output_path, 
+            filename=f"clean_{file.filename}", 
+            media_type=media_type
+        )
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        if os.path.exists(input_path):
-            os.remove(input_path)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
-        
+        raise HTTPException(status_code=500, detail=str(e))
+    
