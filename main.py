@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import uvicorn
+import uuid
 
 app = FastAPI()
 
@@ -20,20 +21,19 @@ app.add_middleware(
 UPLOAD_FOLDER = '/tmp' if os.name != 'nt' else './uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def clean_pdf(input_path, output_path, crop_pixels=60):
+
+def clean_pdf(input_path, output_path, crop_pixels=90):
     try:
         doc = fitz.open(input_path)
         for page in doc:
             rect = page.rect
-            # Crop 60 pixels from the bottom of each page to remove logo and text
             new_rect = fitz.Rect(rect.x0, rect.y0, rect.x1, rect.y1 - crop_pixels)
             page.set_cropbox(new_rect)
-        
-        # Save with garbage collection to permanently remove the cropped data
         doc.save(output_path, garbage=3, deflate=True)
         doc.close()
     except Exception as e:
         raise Exception(f"PDF Processing Error: {str(e)}")
+
 
 def clean_pptx(input_path, output_path, target_text):
     try:
@@ -49,40 +49,46 @@ def clean_pptx(input_path, output_path, target_text):
     except Exception as e:
         raise Exception(f"PPTX Processing Error: {str(e)}")
 
+
 @app.post("/process")
 async def process_file(
     file: UploadFile = File(...),
     watermark_text: str = Form(default="NotebookLM")
 ):
     ext = os.path.splitext(file.filename)[1].lower()
-    input_path = os.path.join(UPLOAD_FOLDER, f"input_file{ext}")
-    output_path = os.path.join(UPLOAD_FOLDER, f"output_file{ext}")
-    
+
+    uid = uuid.uuid4().hex
+    input_path = os.path.join(UPLOAD_FOLDER, f"input_{uid}{ext}")
+    output_path = os.path.join(UPLOAD_FOLDER, f"output_{uid}{ext}")
+
     with open(input_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
     try:
         if ext == '.pdf':
-            # PDF automatically crops the bottom, no text matching needed
-            clean_pdf(input_path, output_path, crop_pixels=60)
+            clean_pdf(input_path, output_path, crop_pixels=90)
             media_type = 'application/pdf'
         elif ext in ['.pptx', '.ppt']:
-            # PPTX still uses text matching
-            text_to_remove = watermark_text.strip() if watermark_text.strip() else "NotebookLM"
+            text_to_remove = watermark_text.strip() or "NotebookLM"
             clean_pptx(input_path, output_path, text_to_remove)
             media_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
         else:
-            raise HTTPException(status_code=400, detail="Only PDF and PPTX files are supported now.")
+            raise HTTPException(status_code=400, detail="Only PDF and PPTX files are supported.")
 
         return FileResponse(
-            path=output_path, 
-            filename=f"clean_{file.filename}", 
+            path=output_path,
+            filename=f"clean_{file.filename}",
             media_type=media_type
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-    
