@@ -4,7 +4,6 @@ from pptx import Presentation
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, ImageDraw
 import shutil
 import uvicorn
 
@@ -70,15 +69,8 @@ async def process_file(
         elif ext in ['.pptx', '.ppt']:
             clean_pptx(input_path, output_path, watermark_text.strip())
             media_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-        elif ext in ['.png', '.jpg', '.jpeg']:
-            img = Image.open(input_path)
-            draw = ImageDraw.Draw(img)
-            w, h = img.size
-            draw.rectangle([(0, h - 60), (w, h)], fill="white")
-            img.save(output_path)
-            media_type = f"image/{ext[1:]}"
         else:
-            raise HTTPException(status_code=400, detail="Unsupported file format.")
+            raise HTTPException(status_code=400, detail="Only PDF and PPTX files are supported now.")
 
         return FileResponse(
             path=output_path, 
