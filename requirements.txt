@@ -1,5 +1,1 @@
-fastapi
-uvicorn
-python-multipart
-PyMuPDF
-python-pptx
+
